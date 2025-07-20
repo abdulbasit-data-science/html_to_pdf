@@ -1,14 +1,17 @@
 const express = require('express');
-const puppeteer = require('puppeteer');
+const puppeteer = require('puppeteer-core');
+const chromium = require('@sparticuz/chromium');
 const fs = require('fs').promises;
 const path = require('path');
+require('dotenv').config();
+
 const app = express();
 const port = process.env.PORT || 3000;
-require('dotenv').config();
+
 // Bearer authentication middleware
 const auth = (req, res, next) => {
   const authHeader = req.headers['authorization'];
-  const expectedToken = process.env.BEARER_TOKEN ; // Default for local testing
+  const expectedToken = process.env.BEARER_TOKEN || 'your-secret-token';
 
   if (!authHeader || !authHeader.startsWith('Bearer ')) {
     return res.status(401).json({ error: 'Authorization header missing or invalid' });
@@ -22,13 +25,14 @@ const auth = (req, res, next) => {
   next();
 };
 
-// Create a directory for PDFs if it doesn't exist
+// Create a directory for PDFs
 const pdfDir = path.join(__dirname, 'pdfs');
 fs.mkdir(pdfDir, { recursive: true }).catch(console.error);
 
 app.use(express.json());
+app.use('/pdfs', express.static(pdfDir));
 
-// Apply authentication to the /convert endpoint
+// Convert HTML to PDF
 app.post('/convert', auth, async (req, res) => {
   try {
     const html = req.body.html;
@@ -37,8 +41,11 @@ app.post('/convert', auth, async (req, res) => {
     }
 
     const browser = await puppeteer.launch({
-      headless: true,
-      args: ['--no-sandbox', '--disable-setuid-sandbox']
+      args: [...chromium.args, '--hide-scrollbars', '--disable-web-security'],
+      defaultViewport: chromium.defaultViewport,
+      executablePath: await chromium.executablePath(),
+      headless: chromium.headless,
+      ignoreHTTPSErrors: true
     });
     const page = await browser.newPage();
     await page.setContent(html, { waitUntil: 'networkidle0' });
@@ -47,8 +54,9 @@ app.post('/convert', auth, async (req, res) => {
     const pdfPath = path.join(pdfDir, fileName);
     await page.pdf({
       path: pdfPath,
-      format: 'Legal', // Larger page size as per previous request
-      printBackground: true
+      format: 'Legal', // Larger page size as requested
+      printBackground: true,
+      margin: { top: '20px', right: '20px', bottom: '20px', left: '20px' }
     });
     await browser.close();
 
@@ -66,8 +74,8 @@ app.post('/convert', auth, async (req, res) => {
     const pdfUrl = `${req.protocol}://${req.get('host')}/pdfs/${fileName}`;
     res.json({ pdfUrl });
   } catch (error) {
-    console.error(error);
-    res.status(500).json({ error: 'Failed to generate PDF' });
+    console.error('Error generating PDF:', error.message, error.stack);
+    res.status(500).json({ error: 'Failed to generate PDF', details: error.message });
   }
 });
 
@@ -87,9 +95,7 @@ setInterval(async () => {
   } catch (err) {
     console.error('Cleanup error:', err);
   }
-}, 7200000); // Run every hour
-
-app.use('/pdfs', express.static(pdfDir));
+}, 3600000);
 
 app.listen(port, () => {
   console.log(`Server running on port ${port}`);
