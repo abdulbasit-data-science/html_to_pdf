@@ -96,6 +96,9 @@ setInterval(async () => {
     console.error('Cleanup error:', err);
   }
 }, 3600000);
+app.get('/health', (req, res) => {
+  res.status(200).json({ status: 'OK', message: 'Server is running' });
+});
 
 app.listen(port, () => {
   console.log(`Server running on port ${port}`);
